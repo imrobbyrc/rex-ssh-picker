@@ -118,12 +118,14 @@ rex.action{
         items[#items + 1] = { id = "ssh:" .. i, title = h.host,
           subtitle = subtitle, icon = "terminal" }
       end
-      host = must(rex.ui.pick{
+      -- cancel = throw "cancelled", bukan return nil — tangkap biar gak alert
+      local ok, sel = pcall(rex.ui.pick, {
         title = "SSH: Connect",
         items = items,
         placeholder = "Filter host…",
       })
-      if host == nil then return end
+      if not ok or sel == nil then return end
+      host = sel
       local idx = tonumber(host:match("^ssh:(%d+)$"))
       local h = idx and hosts[idx]
       if not h then error("pilihan gak dikenal: " .. tostring(host), 0) end
