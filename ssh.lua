@@ -1,19 +1,18 @@
 -- ssh: "SSH: Connect…" — picker host dari ~/.ssh/config, ala git-wt.
--- Session per-host, tab idempotent: kalo udah ada sesi host itu, switch aja,
--- gak bikin tab dobel. Koneksi = `ssh <host>` polos (config lu yang urus key).
+-- Session per-host, tab idempotent: kalo udah konek, switch tab aja, gak dobel.
+-- Koneksi = `ssh <host>` polos (config lu yang urus key/port/jump).
 --
--- Install: require("ssh") di init.lua. Trigger: ctrl+alt+s / palette /
--- `rex do ssh_open` / `rex do ssh_open host=bk-prod` (langsung, tanpa picker).
+-- PENTING: rex.ui.pick HARUS dipanggil langsung (rex.ui.pick{...}), JANGAN
+-- dibungkus pcall — pcall bikin UI-nya gak render, balikin nil diem.
+-- Cancel = return (nil, "cancelled", nil), aman ditangkap biasa.
+--
+-- Install: require("ssh") di init.lua. Trigger: ctrl+alt+s / palette
+-- "SSH: Connect Host…" / rex do ssh_open.
 
 local M = {}
 
 local SHELL_FLAVOR = "com.superlogical.terminal.shell"
 local SSH_CONFIG = os.getenv("HOME") .. "/.ssh/config"
-
-local function must(res, err)
-  if res == nil then error(err, 0) end
-  return res
-end
 
 -- Parse ~/.ssh/config: blok Host polos (skip pattern * ? !), ambil
 -- hostname/user/port buat subtitle.
@@ -72,20 +71,20 @@ end
 function M.open_ssh_tab(host)
   local session = find_session(host)
   if not session then
-    local created = must(rex.call("session.create", {
+    local created = rex.call("session.create", {
       label = host,
       initial_windows = { { window_label = host, layout = ssh_layout(host) } },
-    }), "session.create gagal")
+    })
     return { session_id = created.session_id,
       window_id = created.initial_windows[1].window_id }
   end
   local window = find_window(session, host)
   if not window then
-    window = must(rex.call("session.new_window", {
+    window = rex.call("session.new_window", {
       session_id = session.session_id,
       window_label = host,
       layout = ssh_layout(host),
-    }), "session.new_window gagal")
+    })
   end
   return { session_id = session.session_id, window_id = window.window_id }
 end
@@ -98,42 +97,34 @@ end
 rex.action{
   name = "ssh_open",
   title = "SSH: Connect Host…",
-  description = "Pick an SSH host from ~/.ssh/config and connect in its own session.",
-  category = "ssh",
-  keywords = "ssh connect host server",
-  args = { type = "object", properties = { host = { type = "string" } } },
   run = function(ctx, args)
-    local host = args and args.host
-    if not host then
-      local hosts = M.list_hosts()
-      if #hosts == 0 then
-        error("Gak ada host polos di " .. SSH_CONFIG, 0)
-      end
-      local items = {}
-      for i, h in ipairs(hosts) do
-        local subtitle = h.user and (h.user .. "@")
-          or ""
-        subtitle = subtitle .. (h.hostname or h.host)
-        if h.port then subtitle = subtitle .. ":" .. h.port end
-        items[#items + 1] = { id = "ssh:" .. i, title = h.host,
-          subtitle = subtitle, icon = "terminal" }
-      end
-      -- cancel = throw "cancelled", bukan return nil — tangkap biar gak alert
-      local ok, sel = pcall(rex.ui.pick, {
-        title = "SSH: Connect",
-        items = items,
-        placeholder = "Filter host…",
-      })
-      if not ok or sel == nil then return end
-      host = sel
-      local idx = tonumber(host:match("^ssh:(%d+)$"))
-      local h = idx and hosts[idx]
-      if not h then error("pilihan gak dikenal: " .. tostring(host), 0) end
-      host = h.host
+    local hosts = M.list_hosts()
+    if #hosts == 0 then
+      error("Gak ada host polos di " .. SSH_CONFIG, 0)
     end
-    local tab = M.open_ssh_tab(host)
+    local items = {}
+    for i, h in ipairs(hosts) do
+      local subtitle = (h.user and (h.user .. "@") or "") .. (h.hostname or h.host)
+      if h.port then subtitle = subtitle .. ":" .. h.port end
+      items[#items + 1] = { id = "ssh:" .. i, title = h.host,
+        subtitle = subtitle, icon = "branch" }
+    end
+
+    -- panggilan langsung — lihat catatan PENTING di atas
+    local sel, why = rex.ui.pick{
+      title = "SSH: Connect",
+      items = items,
+      placeholder = "Filter host…",
+    }
+    if sel == nil then return end  -- dibatalkan (why = "cancelled")
+
+    local idx = tonumber(sel:match("^ssh:(%d+)$"))
+    local h = idx and hosts[idx]
+    if not h then error("pilihan gak dikenal: " .. tostring(sel), 0) end
+
+    local tab = M.open_ssh_tab(h.host)
     focus(tab)
-    return "connected: " .. host
+    return "connected: " .. h.host
   end,
 }
 
